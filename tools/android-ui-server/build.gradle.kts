@@ -1,0 +1,54 @@
+import com.android.build.api.artifact.SingleArtifact
+
+plugins {
+    id("com.android.application")
+}
+
+android {
+    namespace = "app.operit.uiserver"
+    compileSdk = 35
+    defaultConfig {
+        applicationId = "app.operit.uiserver"
+        minSdk = 30
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1"
+    }
+    buildFeatures { aidl = true }
+    sourceSets.getByName("main").aidl.srcDir("contract/src/main/aidl")
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    buildTypes.getByName("release") {
+        isMinifyEnabled = false
+    }
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+}
+
+val frameworkStubs = tasks.register<JavaCompile>("compileWindowFrameworkStubs") {
+    source(fileTree("framework-stubs") { include("**/*.java") })
+    classpath = files(android.bootClasspath)
+    destinationDirectory.set(layout.buildDirectory.dir("framework-stubs/classes"))
+    sourceCompatibility = "17"
+    targetCompatibility = "17"
+}
+val frameworkStubJar = tasks.register<Jar>("windowFrameworkStubJar") {
+    from(frameworkStubs.flatMap { it.destinationDirectory })
+    archiveFileName.set("window-framework-stubs.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("framework-stubs"))
+}
+dependencies { compileOnly(files(frameworkStubJar.flatMap { it.archiveFile })) }
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        configurations.create("${variant.name}Apk") {
+            isCanBeConsumed = true
+            isCanBeResolved = false
+            outgoing.artifact(variant.artifacts.get(SingleArtifact.APK))
+        }
+    }
+}

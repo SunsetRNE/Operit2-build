@@ -1,0 +1,93 @@
+name: Node 24 Runtime Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'codex/node24-runtime-build-*'
+
+permissions:
+  contents: read
+
+jobs:
+  rootfs:
+    name: ${{ matrix.platform }} Node 24 rootfs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ios-arm64
+            script: tools/ios-runtime/arm64/build_rootfs_linux.sh
+            archive: apps/flutter/app/ios/Runner/arm64-rootfs.tar.gz
+          - platform: android
+            script: tools/android-runtime/build_alpine_rootfs_wsl.sh
+            archive: apps/flutter/app/android/app/src/main/assets/android-runtime/arm64-v8a/rootfs.tar.gz.bin
+          - platform: ohos
+            script: tools/ohos-runtime/build_alpine_rootfs_linux.sh
+            archive: apps/flutter/app/ohos/entry/src/main/resources/rawfile/ohos-vroot/alpine-minirootfs-3.23.6-aarch64.tar.gz
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl gawk python3 qemu-user-static binfmt-support
+      - name: Build runtime rootfs
+        if: matrix.platform == 'android'
+        env:
+          BUILD_SCRIPT: ${{ matrix.script }}
+        run: bash "$BUILD_SCRIPT"
+      - name: Build runtime rootfs with preserved ownership
+        if: matrix.platform == 'ohos' || matrix.platform == 'ios-arm64'
+        env:
+          BUILD_SCRIPT: ${{ matrix.script }}
+        run: sudo bash "$BUILD_SCRIPT"
+      - name: Stage runtime artifacts
+        env:
+          RUNTIME_ARCHIVE: ${{ matrix.archive }}
+        run: |
+          mkdir -p runtime-artifacts
+          cp "$RUNTIME_ARCHIVE" runtime-artifacts/
+          (cd runtime-artifacts && sha256sum "$(basename "$RUNTIME_ARCHIVE")" > "$(basename "$RUNTIME_ARCHIVE").sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node24-${{ matrix.platform }}-${{ github.sha }}
+          path: runtime-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
+  web:
+    name: Web V86 Node 24 runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install i686 build tools
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib libc6-dev-i386 \
+            libssl-dev:i386 libsqlite3-dev:i386 zlib1g-dev:i386 \
+            libffi-dev:i386 liblzma-dev:i386 libbz2-dev:i386 \
+            libreadline-dev:i386 libncurses-dev:i386 \
+            pax-utils python3-pyelftools patchelf cpio zip unzip curl
+      - name: Build V86 runtime
+        run: bash tools/web-runtime/build_v86_runtime_wsl.sh
+      - name: Stage runtime artifacts
+        run: |
+          mkdir -p runtime-artifacts
+          cp apps/flutter/app/web/runtime/generated/v86/operit-runtime-* runtime-artifacts/
+          (cd runtime-artifacts && sha256sum operit-runtime-bzimage.bin operit-runtime-initrd.cpio.gz > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node24-web-${{ github.sha }}
+          path: runtime-artifacts/
+          if-no-files-found: error
+          retention-days: 14
